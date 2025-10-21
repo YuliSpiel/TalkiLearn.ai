@@ -1,0 +1,29 @@
+# 독일어 레벨 테스트 앱 의존성
+
+# 웹 프레임워크
+streamlit>=1.28.0
+
+# 데이터 처리
+numpy>=1.24.0
+pandas>=2.0.0
+
+# NLP 및 임베딩
+sentence-transformers>=2.2.0
+transformers>=4.30.0
+torch>=2.0.0
+
+# 데이터셋 로드
+datasets>=2.14.0
+
+# AI 피드백
+openai>=1.0.0
+
+# 백엔드 API
+fastapi>=0.104.0
+uvicorn[standard]>=0.24.0
+pydantic>=2.4.0
+
+# 유틸리티
+tqdm>=4.65.0
+python-dotenv>=1.0.0
+beautifulsoup4>=4.12.0
