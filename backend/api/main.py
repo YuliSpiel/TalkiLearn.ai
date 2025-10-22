@@ -299,12 +299,13 @@ async def upload_session(
 # ========== 3. Learning - Chat ==========
 
 @app.post("/learn/chat/intro")
-async def get_subsession_intro(subsession_id: int):
+async def get_subsession_intro(subsession_id: int, user_id: str = "default_user"):
     """
     서브세션 시작 시 AI 튜터의 소개 메시지 생성
 
     Args:
         subsession_id: 서브세션 ID
+        user_id: 사용자 ID (기본값: default_user)
 
     Returns:
         {
@@ -323,15 +324,24 @@ async def get_subsession_intro(subsession_id: int):
     # 청크 문서와 메타데이터 추출
     chunk_documents = [chunk["document"] for chunk in chunks]
 
-    # 서브세션 제목 (첫 번째 청크의 메타데이터에서 가져오거나 기본값)
-    # 실제로는 DB에서 가져와야 하지만 여기서는 간단히 처리
-    subsession_title = "학습 주제"  # TODO: DB에서 실제 제목 가져오기
+    # 서브세션 제목과 사용자 닉네임 가져오기
+    result = db.find_subsession_by_id(subsession_id)
+    if result:
+        _, _, subsession = result
+        subsession_title = subsession.title
+    else:
+        subsession_title = "학습 주제"
+
+    # 사용자 프로필에서 닉네임 가져오기
+    user_profile = db.get_profile(user_id)
+    user_nickname = user_profile.nickname if user_profile else "학습자"
 
     # LLM으로 소개 메시지 생성
     llm_service = get_llm_service()
     intro = llm_service.generate_subsession_intro(
         subsession_title=subsession_title,
-        context_chunks=chunk_documents
+        context_chunks=chunk_documents,
+        user_nickname=user_nickname
     )
 
     # 전체 메시지 조합

@@ -329,7 +329,7 @@ class LLMService:
         }
 
     def generate_subsession_intro(
-        self, subsession_title: str, context_chunks: List[str]
+        self, subsession_title: str, context_chunks: List[str], user_nickname: str = "학습자"
     ) -> Dict[str, Any]:
         """
         서브세션 시작 시 AI 튜터의 소개 메시지 생성
@@ -337,6 +337,7 @@ class LLMService:
         Args:
             subsession_title: 서브세션 제목
             context_chunks: 서브세션의 학습 내용 청크들
+            user_nickname: 사용자 닉네임
 
         Returns:
             {
@@ -351,8 +352,11 @@ class LLMService:
         system_prompt = f"""당신은 친절하고 전문적인 학습 튜터입니다.
 새로운 학습 주제를 시작하는 학생에게 인사하고 오늘 배울 내용을 소개합니다.
 
+**학생 정보:**
+- 닉네임: {user_nickname}
+
 **역할:**
-1. 따뜻하게 인사하고 오늘 배울 주제를 소개합니다.
+1. 학생의 닉네임을 사용하여 따뜻하게 인사하고 오늘 배울 주제를 소개합니다.
 2. 이번 세션에서 배울 내용을 3~5문장으로 간략히 요약합니다.
 3. 학생이 이 주제에 대해 얼마나 알고 있는지 확인하는 친근한 질문을 던집니다.
 4. 응답은 반드시 JSON 형식으로 출력해야 합니다.
@@ -364,7 +368,7 @@ class LLMService:
 
 **JSON 출력 형식:**
 {{
-  "greeting": "인사말 (1-2문장)",
+  "greeting": "닉네임을 포함한 인사말 (1-2문장, 예: '{user_nickname}님, 안녕하세요!')",
   "topic_overview": "오늘 배울 내용 요약 (2-3문장)",
   "check_question": "사전 지식 확인 질문 (1문장, 예: '이 주제에 대해 들어본 적 있나요?', '어느 정도 알고 계신가요?')"
 }}
