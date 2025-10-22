@@ -1,8 +1,7 @@
 # Virtual environment
-dddvenv/
+.venv/
 venv/
 env/
-tlvenv/
 
 # Python
 __pycache__/

@@ -43,20 +43,20 @@ cd TalkiLearn.ai
 
 ```bash
 # 가상환경 생성
-python -m venv tlvenv
+python -m venv .venv
 
 # 가상환경 활성화
 # macOS/Linux:
-source tlvenv/bin/activate
+source .venv/bin/activate
 
 # Windows (PowerShell):
-tlvenv\Scripts\Activate.ps1
+.venv\Scripts\Activate.ps1
 
 # Windows (Command Prompt):
-tlvenv\Scripts\activate.bat
+.venv\Scripts\activate.bat
 ```
 
-가상환경이 활성화되면 터미널 프롬프트 앞에 `(tlvenv)`가 표시됩니다.
+가상환경이 활성화되면 터미널 프롬프트 앞에 `(.venv)`가 표시됩니다.
 
 ### Step 3: 의존성 설치
 
@@ -147,7 +147,7 @@ chmod +x start_frontend.sh
 
 **터미널 1 - 백엔드:**
 ```bash
-cd backend
+ㅊ
 python -m uvicorn api.main:app --host 0.0.0.0 --port 8000 --reload
 ```
 
@@ -229,7 +229,7 @@ ModuleNotFoundError: No module named 'fastapi'
 **해결:**
 ```bash
 # 가상환경이 활성화되어 있는지 확인
-which python  # tlvenv/bin/python이어야 함
+which python  # .venv/bin/python이어야 함
 
 # 의존성 재설치
 pip install -r requirements.txt --upgrade
