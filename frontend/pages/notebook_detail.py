@@ -1,5 +1,6 @@
 import streamlit as st
 import httpx
+import json
 
 
 def show():
@@ -67,32 +68,64 @@ def show():
 
         if uploaded_file is not None:
             if st.button("학습 시작하기", use_container_width=True, type="primary"):
-                with st.spinner("파일을 처리하는 중입니다... (청킹, 임베딩, 클러스터링)"):
-                    try:
-                        # multipart/form-data로 파일 업로드
-                        with httpx.Client(timeout=300.0) as client:
-                            files = {"file": (uploaded_file.name, uploaded_file.getvalue())}
-                            data = {"notebook_id": notebook_id}
-                            response = client.post(
-                                f"{api_url}/sessions:upload",
-                                files=files,
-                                data=data
-                            )
+                # 진행률 표시 컨테이너
+                progress_container = st.empty()
+                progress_bar = st.progress(0)
+                status_text = st.empty()
 
-                        if response.status_code == 200:
-                            result = response.json()
-                            st.success(f"✅ 파일이 처리되었습니다!")
-                            st.info(
-                                f"총 {result['total_chunks']}개 청크, "
-                                f"{result['num_subsessions']}개 서브세션으로 분할되었습니다."
-                            )
-                            st.balloons()
-                            st.rerun()
-                        else:
-                            st.error(f"업로드 실패: {response.text}")
+                try:
+                    # multipart/form-data로 파일 업로드 (스트리밍)
+                    with httpx.Client(timeout=600.0) as client:
+                        files = {"file": (uploaded_file.name, uploaded_file.getvalue())}
+                        data = {"notebook_id": notebook_id}
 
-                    except Exception as e:
-                        st.error(f"업로드 오류: {str(e)}")
+                        with client.stream(
+                            "POST",
+                            f"{api_url}/sessions:upload-stream",
+                            files=files,
+                            data=data
+                        ) as response:
+                            if response.status_code == 200:
+                                # Server-Sent Events 파싱
+                                for line in response.iter_lines():
+                                    if line.startswith("data: "):
+                                        data_str = line[6:]  # "data: " 제거
+                                        try:
+                                            event_data = json.loads(data_str)
+
+                                            # 진행률 업데이트
+                                            progress = event_data.get("progress", 0)
+                                            message = event_data.get("message", "")
+                                            stage = event_data.get("stage", "")
+
+                                            progress_bar.progress(progress)
+                                            status_text.text(f"{progress}% - {message}")
+
+                                            # 완료 처리
+                                            if stage == "complete":
+                                                result = event_data
+                                                progress_container.success("✅ 파일이 처리되었습니다!")
+                                                status_text.info(
+                                                    f"총 {result['total_chunks']}개 청크, "
+                                                    f"{result['num_subsessions']}개 서브세션으로 분할되었습니다."
+                                                )
+                                                st.balloons()
+                                                st.rerun()
+                                                break
+
+                                            # 에러 처리
+                                            elif stage == "error":
+                                                error_msg = event_data.get("message", "알 수 없는 오류")
+                                                st.error(f"업로드 실패: {error_msg}")
+                                                break
+
+                                        except json.JSONDecodeError:
+                                            continue
+                            else:
+                                st.error(f"업로드 실패: {response.text}")
+
+                except Exception as e:
+                    st.error(f"업로드 오류: {str(e)}")
 
     st.markdown("---")
 

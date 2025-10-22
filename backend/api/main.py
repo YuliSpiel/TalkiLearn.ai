@@ -1,11 +1,12 @@
 from fastapi import FastAPI, UploadFile, File, HTTPException, Form
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
-from typing import List, Optional
+from typing import List, Optional, AsyncGenerator
 import os
 import uuid
 from datetime import datetime
 import json
+import asyncio
 
 from ..models import (
     Notebook,
@@ -294,6 +295,190 @@ async def upload_session(
         session.status = SessionStatus.ERROR
         db.update_session(notebook_id, session)
         raise HTTPException(status_code=500, detail=f"Error processing file: {str(e)}")
+
+
+@app.post("/sessions:upload-stream")
+async def upload_session_with_progress(
+    notebook_id: int = Form(...),
+    file: UploadFile = File(...)
+):
+    """
+    파일 업로드 및 세션 생성 (진행률 스트리밍)
+
+    Server-Sent Events (SSE) 형식으로 진행률을 실시간 전송합니다.
+    """
+    async def generate_progress() -> AsyncGenerator[str, None]:
+        try:
+            # 노트북 존재 확인
+            notebook = db.get_notebook(notebook_id)
+            if not notebook:
+                yield f"data: {json.dumps({'error': 'Notebook not found'})}\n\n"
+                return
+
+            # 파일 타입 확인
+            filename = file.filename
+            file_type = filename.split(".")[-1].lower()
+            if file_type not in ["txt", "pdf"]:
+                yield f"data: {json.dumps({'error': 'Unsupported file type'})}\n\n"
+                return
+
+            yield f"data: {json.dumps({'stage': 'init', 'message': '파일 업로드 시작...', 'progress': 0})}\n\n"
+            await asyncio.sleep(0.1)
+
+            # 세션 생성
+            max_session_id = max([s.session_id for s in notebook.sessions], default=0)
+            new_session_id = max_session_id + 1
+
+            session = Session(
+                session_id=new_session_id,
+                notebook_id=notebook_id,
+                filename=filename,
+                file_type=file_type,
+                status=SessionStatus.PROCESSING
+            )
+            db.add_session_to_notebook(notebook_id, session)
+
+            # 1. 파일 읽기
+            yield f"data: {json.dumps({'stage': 'reading', 'message': '파일 읽는 중...', 'progress': 10})}\n\n"
+            file_bytes = await file.read()
+
+            # 2. 텍스트 추출
+            yield f"data: {json.dumps({'stage': 'extracting', 'message': '텍스트 추출 중...', 'progress': 20})}\n\n"
+            from ..services.document_processor import extract_text_from_bytes
+            text = extract_text_from_bytes(file_bytes, file_type)
+
+            # 3. 청킹
+            yield f"data: {json.dumps({'stage': 'chunking', 'message': '텍스트 분할 중...', 'progress': 30})}\n\n"
+            processor = DocumentProcessor(chunk_size=800, overlap_ratio=0.2)
+            chunks = processor.chunk_text(text)
+            session.total_chunks = len(chunks)
+
+            # 4. 임베딩 생성 (진행률 콜백 사용)
+            embedding_service = get_embedding_service()
+            embeddings_list = []
+
+            def embedding_progress(current: int, total: int):
+                progress = 30 + int((current / total) * 40)  # 30-70%
+                embeddings_list.clear()
+                embeddings_list.append((current, total))
+
+            yield f"data: {json.dumps({'stage': 'embedding', 'message': f'임베딩 생성 중 (0/{len(chunks)})...', 'progress': 30})}\n\n"
+
+            # 진행률을 보고하면서 임베딩 생성
+            embeddings = embedding_service.encode(
+                chunks,
+                show_progress=False,
+                progress_callback=embedding_progress
+            )
+
+            # 임베딩 완료 후 진행률 전송
+            if embeddings_list:
+                current, total = embeddings_list[0]
+                yield f"data: {json.dumps({'stage': 'embedding', 'message': f'임베딩 생성 완료 ({total}/{total})', 'progress': 70})}\n\n"
+
+            # 5. 토픽 클러스터링
+            yield f"data: {json.dumps({'stage': 'clustering', 'message': '토픽 클러스터링 중...', 'progress': 75})}\n\n"
+            cluster_labels, num_clusters = processor.cluster_chunks_into_subsessions(
+                embeddings,
+                min_clusters=3,
+                max_clusters=8
+            )
+
+            # 6. Subsession 생성
+            yield f"data: {json.dumps({'stage': 'creating_subsessions', 'message': '서브세션 생성 중...', 'progress': 80})}\n\n"
+            subsessions = []
+            subsession_id_base = notebook_id * 100000 + new_session_id * 1000
+
+            for cluster_idx in range(num_clusters):
+                cluster_chunk_indices = [i for i, label in enumerate(cluster_labels) if label == cluster_idx]
+                chunk_ids = list(range(subsession_id_base + cluster_idx * 100, subsession_id_base + cluster_idx * 100 + len(cluster_chunk_indices)))
+
+                # 서브세션 제목 생성
+                cluster_chunks = [chunks[i] for i in cluster_chunk_indices]
+                llm_service = get_llm_service()
+                title = llm_service.generate_subsession_title(cluster_chunks)
+
+                subsession = Subsession(
+                    subsession_id=subsession_id_base + cluster_idx,
+                    session_id=new_session_id,
+                    index=cluster_idx + 1,
+                    title=title,
+                    chunk_ids=chunk_ids
+                )
+                subsessions.append(subsession)
+
+                # 7. Chroma에 청크 저장
+                chunk_embeddings = [embeddings[i] for i in cluster_chunk_indices]
+                chunk_documents = cluster_chunks
+                chunk_metadatas = [
+                    {
+                        "notebook_id": notebook_id,
+                        "session_id": new_session_id,
+                        "subsession_id": subsession.subsession_id,
+                        "chunk_id": chunk_id,
+                        "cluster": cluster_idx
+                    }
+                    for chunk_id in chunk_ids
+                ]
+                chunk_id_strings = [str(chunk_id) for chunk_id in chunk_ids]
+
+                vector_store.add_chunks(
+                    chunks=chunk_documents,
+                    embeddings=chunk_embeddings,
+                    metadatas=chunk_metadatas,
+                    chunk_ids=chunk_id_strings
+                )
+
+                progress = 80 + int(((cluster_idx + 1) / num_clusters) * 15)  # 80-95%
+                yield f"data: {json.dumps({'stage': 'saving', 'message': f'서브세션 저장 중 ({cluster_idx+1}/{num_clusters})...', 'progress': progress})}\n\n"
+
+            # 8. 세션 업데이트
+            session.subsessions = subsessions
+            session.status = SessionStatus.INDEXED
+            session.indexed_at = datetime.now()
+            db.update_session(notebook_id, session)
+
+            # 완료
+            result = {
+                "stage": "complete",
+                "message": "파일 처리 완료!",
+                "progress": 100,
+                "session_id": new_session_id,
+                "total_chunks": len(chunks),
+                "num_subsessions": num_clusters,
+                "subsessions": [
+                    {
+                        "subsession_id": sub.subsession_id,
+                        "index": sub.index,
+                        "title": sub.title,
+                        "num_chunks": len(sub.chunk_ids)
+                    }
+                    for sub in subsessions
+                ]
+            }
+            yield f"data: {json.dumps(result)}\n\n"
+
+        except Exception as e:
+            # 에러 발생 시
+            if 'session' in locals():
+                session.status = SessionStatus.ERROR
+                db.update_session(notebook_id, session)
+
+            error_data = {
+                "stage": "error",
+                "message": f"에러 발생: {str(e)}",
+                "progress": 0
+            }
+            yield f"data: {json.dumps(error_data)}\n\n"
+
+    return StreamingResponse(
+        generate_progress(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+        }
+    )
 
 
 # ========== 3. Learning - Chat ==========

@@ -1,5 +1,5 @@
 from sentence_transformers import SentenceTransformer
-from typing import List
+from typing import List, Callable, Optional
 import numpy as np
 
 
@@ -20,31 +20,52 @@ class EmbeddingService:
     def encode(
         self,
         texts: List[str],
-        batch_size: int = 32,
-        show_progress: bool = False
+        batch_size: int = 64,  # 배치 크기 증가 (32 -> 64)
+        show_progress: bool = False,
+        progress_callback: Optional[Callable[[int, int], None]] = None
     ) -> List[List[float]]:
         """
         텍스트 리스트를 임베딩 벡터로 변환
 
         Args:
             texts: 텍스트 목록
-            batch_size: 배치 크기
+            batch_size: 배치 크기 (기본값 64로 증가)
             show_progress: 진행률 표시 여부
+            progress_callback: 진행률 콜백 함수 (current, total)
 
         Returns:
             임베딩 벡터 목록 (L2 정규화 적용)
         """
-        # L2 정규화를 통해 코사인 유사도 최적화
-        embeddings = self.model.encode(
-            texts,
-            batch_size=batch_size,
-            show_progress_bar=show_progress,
-            normalize_embeddings=True,  # L2 normalization
-            convert_to_numpy=True
-        )
+        if progress_callback:
+            # 배치 단위로 처리하며 진행률 보고
+            all_embeddings = []
+            total_texts = len(texts)
 
-        # numpy array를 리스트로 변환
-        return embeddings.tolist()
+            for i in range(0, total_texts, batch_size):
+                batch = texts[i:i + batch_size]
+                batch_embeddings = self.model.encode(
+                    batch,
+                    batch_size=batch_size,
+                    show_progress_bar=False,
+                    normalize_embeddings=True,
+                    convert_to_numpy=True
+                )
+                all_embeddings.extend(batch_embeddings)
+
+                # 진행률 콜백 호출
+                progress_callback(min(i + batch_size, total_texts), total_texts)
+
+            return np.array(all_embeddings).tolist()
+        else:
+            # 기존 방식 (진행률 콜백 없음)
+            embeddings = self.model.encode(
+                texts,
+                batch_size=batch_size,
+                show_progress_bar=show_progress,
+                normalize_embeddings=True,  # L2 normalization
+                convert_to_numpy=True
+            )
+            return embeddings.tolist()
 
     def encode_query(self, query: str) -> List[float]:
         """
