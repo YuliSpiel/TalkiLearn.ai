@@ -1,6 +1,7 @@
 from sentence_transformers import SentenceTransformer
 from typing import List, Callable, Optional
 import numpy as np
+import torch
 
 
 class EmbeddingService:
@@ -13,9 +14,21 @@ class EmbeddingService:
                        기본값: paraphrase-MiniLM-L3-v2 (매우 빠른 경량 모델, 2-3배 속도 향상)
         """
         self.model_name = model_name
+
+        # GPU 디바이스 설정 (Apple Silicon MPS 또는 CUDA)
+        if torch.backends.mps.is_available():
+            self.device = "mps"
+            print(f"🚀 Using Apple Silicon GPU (MPS) for acceleration")
+        elif torch.cuda.is_available():
+            self.device = "cuda"
+            print(f"🚀 Using CUDA GPU for acceleration")
+        else:
+            self.device = "cpu"
+            print(f"⚠️ Using CPU (no GPU available)")
+
         print(f"Loading embedding model: {model_name}...")
-        self.model = SentenceTransformer(model_name)
-        print("Embedding model loaded successfully.")
+        self.model = SentenceTransformer(model_name, device=self.device)
+        print(f"Embedding model loaded successfully on {self.device.upper()}")
 
     def encode(
         self,
