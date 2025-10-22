@@ -353,31 +353,33 @@ async def upload_session_with_progress(
             chunks = processor.chunk_text(text)
             session.total_chunks = len(chunks)
 
-            # 4. 임베딩 생성 (진행률 콜백 사용)
+            # 4. 임베딩 생성 (배치 단위로 처리하며 진행률 전송)
             embedding_service = get_embedding_service()
-            embeddings_list = []
+            embeddings = []
+            batch_size = 64
+            total_chunks = len(chunks)
 
-            def embedding_progress(current: int, total: int):
-                progress = 30 + int((current / total) * 40)  # 30-70%
-                embeddings_list.clear()
-                embeddings_list.append((current, total))
+            yield f"data: {json.dumps({'stage': 'embedding', 'message': f'임베딩 생성 중 (0/{total_chunks})...', 'progress': 30})}\n\n"
+            await asyncio.sleep(0.01)  # 연결 유지
 
-            yield f"data: {json.dumps({'stage': 'embedding', 'message': f'임베딩 생성 중 (0/{len(chunks)})...', 'progress': 30})}\n\n"
+            # 배치 단위로 처리하며 각 배치마다 진행률 전송
+            for i in range(0, total_chunks, batch_size):
+                batch = chunks[i:i + batch_size]
+                batch_embeddings = embedding_service.encode(batch, show_progress=False)
+                embeddings.extend(batch_embeddings)
 
-            # 진행률을 보고하면서 임베딩 생성
-            embeddings = embedding_service.encode(
-                chunks,
-                show_progress=False,
-                progress_callback=embedding_progress
-            )
+                # 진행률 계산 및 전송
+                processed = min(i + batch_size, total_chunks)
+                progress = 30 + int((processed / total_chunks) * 40)  # 30-70%
+                yield f"data: {json.dumps({'stage': 'embedding', 'message': f'임베딩 생성 중 ({processed}/{total_chunks})...', 'progress': progress})}\n\n"
+                await asyncio.sleep(0.01)  # 연결 유지 및 CPU 양보
 
-            # 임베딩 완료 후 진행률 전송
-            if embeddings_list:
-                current, total = embeddings_list[0]
-                yield f"data: {json.dumps({'stage': 'embedding', 'message': f'임베딩 생성 완료 ({total}/{total})', 'progress': 70})}\n\n"
+            yield f"data: {json.dumps({'stage': 'embedding', 'message': f'임베딩 생성 완료 ({total_chunks}/{total_chunks})', 'progress': 70})}\n\n"
 
             # 5. 토픽 클러스터링
             yield f"data: {json.dumps({'stage': 'clustering', 'message': '토픽 클러스터링 중...', 'progress': 75})}\n\n"
+            await asyncio.sleep(0.01)  # 연결 유지
+
             cluster_labels, num_clusters = processor.cluster_chunks_into_subsessions(
                 embeddings,
                 min_clusters=3,
@@ -386,6 +388,8 @@ async def upload_session_with_progress(
 
             # 6. Subsession 생성
             yield f"data: {json.dumps({'stage': 'creating_subsessions', 'message': '서브세션 생성 중...', 'progress': 80})}\n\n"
+            await asyncio.sleep(0.01)  # 연결 유지
+
             subsessions = []
             subsession_id_base = notebook_id * 100000 + new_session_id * 1000
 
@@ -431,6 +435,7 @@ async def upload_session_with_progress(
 
                 progress = 80 + int(((cluster_idx + 1) / num_clusters) * 15)  # 80-95%
                 yield f"data: {json.dumps({'stage': 'saving', 'message': f'서브세션 저장 중 ({cluster_idx+1}/{num_clusters})...', 'progress': progress})}\n\n"
+                await asyncio.sleep(0.01)  # 연결 유지
 
             # 8. 세션 업데이트
             session.subsessions = subsessions
