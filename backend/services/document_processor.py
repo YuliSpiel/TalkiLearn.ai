@@ -181,9 +181,79 @@ def extract_text_from_bytes(file_bytes: bytes, file_type: str) -> str:
         from io import BytesIO
         reader = PdfReader(BytesIO(file_bytes))
         text = ""
-        for page in reader.pages:
-            text += page.extract_text() + "\n\n"
+        print(f"📄 PDF has {len(reader.pages)} pages")
+
+        for i, page in enumerate(reader.pages):
+            page_text = page.extract_text()
+            if page_text:
+                text += page_text + "\n\n"
+                print(f"✅ Page {i+1}: extracted {len(page_text)} characters")
+            else:
+                print(f"⚠️ Page {i+1}: no text extracted")
+
+        print(f"📝 Total extracted text: {len(text)} characters")
+
+        # 텍스트가 충분하지 않으면 OCR 시도
+        min_chars_per_page = 100  # 페이지당 최소 100자 기대
+        if len(text) < len(reader.pages) * min_chars_per_page:
+            print(f"⚠️ Low text density detected. Attempting OCR...")
+            ocr_text = _extract_text_with_ocr(file_bytes)
+            if ocr_text and len(ocr_text) > len(text):
+                print(f"✅ OCR extracted {len(ocr_text)} characters (better than {len(text)})")
+                text = ocr_text
+            else:
+                print(f"❌ OCR failed or produced less text")
+
+        if not text.strip():
+            print("❌ WARNING: No text extracted from PDF!")
     else:
         raise ValueError(f"Unsupported file type: {file_type}")
 
     return text
+
+
+def _extract_text_with_ocr(pdf_bytes: bytes) -> str:
+    """
+    OCR을 사용하여 PDF에서 텍스트 추출 (이미지 기반 PDF용)
+
+    Args:
+        pdf_bytes: PDF 바이트 데이터
+
+    Returns:
+        OCR로 추출된 텍스트
+    """
+    try:
+        from io import BytesIO
+        from pdf2image import convert_from_bytes
+        import pytesseract
+
+        print("🔍 Starting OCR process...")
+
+        # PDF를 이미지로 변환
+        images = convert_from_bytes(pdf_bytes, dpi=200)
+        print(f"📷 Converted {len(images)} pages to images")
+
+        text = ""
+        for i, image in enumerate(images):
+            # OCR 수행
+            page_text = pytesseract.image_to_string(image, lang='eng+deu')  # 영어+독일어
+            if page_text.strip():
+                text += page_text + "\n\n"
+                print(f"✅ OCR Page {i+1}: extracted {len(page_text)} characters")
+            else:
+                print(f"⚠️ OCR Page {i+1}: no text extracted")
+
+            # 메모리 절약을 위해 이미지 해제
+            image.close()
+
+        print(f"📝 Total OCR text: {len(text)} characters")
+        return text
+
+    except ImportError as e:
+        print(f"❌ OCR libraries not installed: {e}")
+        print("💡 Install with: pip install pdf2image pytesseract")
+        print("💡 Also install tesseract: brew install tesseract (macOS)")
+        return ""
+    except Exception as e:
+        print(f"❌ OCR failed: {str(e)}")
+        return ""

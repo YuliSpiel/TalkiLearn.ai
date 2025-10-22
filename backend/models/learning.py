@@ -17,6 +17,7 @@ class ChatRequest(BaseModel):
     subsession_id: int = Field(..., description="서브세션 ID")
     user_msg: str = Field(..., description="사용자 메시지")
     chat_history: List[ChatMessage] = Field(default_factory=list, description="채팅 히스토리")
+    current_chunk_index: int = Field(default=0, ge=0, description="현재 진행 중인 청크 인덱스 (0부터 시작)")
 
 
 class ChatResponse(BaseModel):
@@ -25,13 +26,19 @@ class ChatResponse(BaseModel):
     explanation: str = Field(..., description="튜터 설명 (3-5문장)")
     prompt_to_user: str = Field(..., description="사용자에게 던질 질문 (1문장)")
     covered_chunk_ids: List[int] = Field(default_factory=list, description="이번에 다룬 청크 ID들")
+    is_complete: bool = Field(default=False, description="모든 내용 학습 완료 여부")
+    next_chunk_index: int = Field(default=0, description="다음에 학습할 청크 인덱스")
+    total_chunks: int = Field(default=0, description="전체 청크 수")
 
     class Config:
         json_schema_extra = {
             "example": {
                 "explanation": "독일어에서 정관사는 성(gender)에 따라 der, die, das로 구분됩니다. 남성명사는 der, 여성명사는 die, 중성명사는 das를 사용하죠. 예를 들어 'der Mann(남자)', 'die Frau(여자)', 'das Kind(아이)'처럼 말이에요.",
                 "prompt_to_user": "'책(Buch)'은 중성명사인데, 정관사를 붙이면 어떻게 될까요?",
-                "covered_chunk_ids": [1, 2, 3]
+                "covered_chunk_ids": [1, 2, 3],
+                "is_complete": False,
+                "next_chunk_index": 1,
+                "total_chunks": 5
             }
         }
 

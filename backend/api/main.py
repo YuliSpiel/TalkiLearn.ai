@@ -1,12 +1,12 @@
 from fastapi import FastAPI, UploadFile, File, HTTPException, Form
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
-from typing import List, Optional, AsyncGenerator
+from typing import List, Optional, Generator
 import os
 import uuid
 from datetime import datetime
 import json
-import asyncio
+import time
 
 from ..models import (
     Notebook,
@@ -53,11 +53,11 @@ app.add_middleware(
 
 # 서비스 인스턴스 (전역)
 vector_store = VectorStoreService()
-db = get_database()
+db = get_database()  # Database 싱글톤 제거로 매번 최신 데이터 읽음
 
 
 @app.on_event("startup")
-async def startup_event():
+def startup_event():
     """서버 시작 시 초기화"""
     print("🚀 TalkiLearn API starting up...")
     print("📦 Loading embedding model...")
@@ -72,7 +72,7 @@ async def startup_event():
 # ========== Health Check ==========
 
 @app.get("/")
-async def root():
+def root():
     """헬스 체크"""
     return {
         "status": "healthy",
@@ -84,7 +84,7 @@ async def root():
 # ========== 1. Notebooks ==========
 
 @app.post("/notebooks", response_model=Notebook)
-async def create_notebook(title: str, user_id: str = "default_user"):
+def create_notebook(title: str, user_id: str = "default_user"):
     """
     노트북 생성
 
@@ -97,7 +97,7 @@ async def create_notebook(title: str, user_id: str = "default_user"):
 
 
 @app.get("/notebooks", response_model=List[Notebook])
-async def get_notebooks(user_id: str = "default_user"):
+def get_notebooks(user_id: str = "default_user"):
     """
     노트북 목록 조회
 
@@ -109,7 +109,7 @@ async def get_notebooks(user_id: str = "default_user"):
 
 
 @app.get("/notebooks/{notebook_id}", response_model=Notebook)
-async def get_notebook(notebook_id: int):
+def get_notebook(notebook_id: int):
     """
     노트북 상세 조회
 
@@ -123,7 +123,7 @@ async def get_notebook(notebook_id: int):
 
 
 @app.delete("/notebooks/{notebook_id}")
-async def delete_notebook(notebook_id: int):
+def delete_notebook(notebook_id: int):
     """
     노트북 삭제
 
@@ -170,6 +170,8 @@ async def upload_session(
         notebook_id: 노트북 ID
         file: 업로드 파일
     """
+    print(f"📥 Upload request received! notebook_id={notebook_id}, filename={file.filename}")
+
     # 노트북 존재 확인
     notebook = db.get_notebook(notebook_id)
     if not notebook:
@@ -196,7 +198,7 @@ async def upload_session(
     db.add_session_to_notebook(notebook_id, session)
 
     try:
-        # 1. 파일 읽기
+        # 1. 파일 읽기 (비동기 방식)
         file_bytes = await file.read()
 
         # 2. 텍스트 추출
@@ -298,7 +300,7 @@ async def upload_session(
 
 
 @app.post("/sessions:upload-stream")
-async def upload_session_with_progress(
+def upload_session_with_progress(
     notebook_id: int = Form(...),
     file: UploadFile = File(...)
 ):
@@ -307,7 +309,7 @@ async def upload_session_with_progress(
 
     Server-Sent Events (SSE) 형식으로 진행률을 실시간 전송합니다.
     """
-    async def generate_progress() -> AsyncGenerator[str, None]:
+    def generate_progress() -> Generator[str, None, None]:
         try:
             # 노트북 존재 확인
             notebook = db.get_notebook(notebook_id)
@@ -323,7 +325,7 @@ async def upload_session_with_progress(
                 return
 
             yield f"data: {json.dumps({'stage': 'init', 'message': '파일 업로드 시작...', 'progress': 0})}\n\n"
-            await asyncio.sleep(0.1)
+            time.sleep(0.1)
 
             # 세션 생성
             max_session_id = max([s.session_id for s in notebook.sessions], default=0)
@@ -340,7 +342,7 @@ async def upload_session_with_progress(
 
             # 1. 파일 읽기
             yield f"data: {json.dumps({'stage': 'reading', 'message': '파일 읽는 중...', 'progress': 10})}\n\n"
-            file_bytes = await file.read()
+            file_bytes = file.file.read()
 
             # 2. 텍스트 추출
             yield f"data: {json.dumps({'stage': 'extracting', 'message': '텍스트 추출 중...', 'progress': 20})}\n\n"
@@ -360,7 +362,7 @@ async def upload_session_with_progress(
             total_chunks = len(chunks)
 
             yield f"data: {json.dumps({'stage': 'embedding', 'message': f'임베딩 생성 중 (0/{total_chunks})...', 'progress': 30})}\n\n"
-            await asyncio.sleep(0.01)  # 연결 유지
+            time.sleep(0.01)  # 연결 유지
 
             # 배치 단위로 처리하며 각 배치마다 진행률 전송
             for i in range(0, total_chunks, batch_size):
@@ -372,13 +374,13 @@ async def upload_session_with_progress(
                 processed = min(i + batch_size, total_chunks)
                 progress = 30 + int((processed / total_chunks) * 40)  # 30-70%
                 yield f"data: {json.dumps({'stage': 'embedding', 'message': f'임베딩 생성 중 ({processed}/{total_chunks})...', 'progress': progress})}\n\n"
-                await asyncio.sleep(0.01)  # 연결 유지 및 CPU 양보
+                time.sleep(0.01)  # 연결 유지 및 CPU 양보
 
             yield f"data: {json.dumps({'stage': 'embedding', 'message': f'임베딩 생성 완료 ({total_chunks}/{total_chunks})', 'progress': 70})}\n\n"
 
             # 5. 토픽 클러스터링
             yield f"data: {json.dumps({'stage': 'clustering', 'message': '토픽 클러스터링 중...', 'progress': 75})}\n\n"
-            await asyncio.sleep(0.01)  # 연결 유지
+            time.sleep(0.01)  # 연결 유지
 
             cluster_labels, num_clusters = processor.cluster_chunks_into_subsessions(
                 embeddings,
@@ -388,7 +390,7 @@ async def upload_session_with_progress(
 
             # 6. Subsession 생성
             yield f"data: {json.dumps({'stage': 'creating_subsessions', 'message': '서브세션 생성 중...', 'progress': 80})}\n\n"
-            await asyncio.sleep(0.01)  # 연결 유지
+            time.sleep(0.01)  # 연결 유지
 
             subsessions = []
             subsession_id_base = notebook_id * 100000 + new_session_id * 1000
@@ -435,7 +437,7 @@ async def upload_session_with_progress(
 
                 progress = 80 + int(((cluster_idx + 1) / num_clusters) * 15)  # 80-95%
                 yield f"data: {json.dumps({'stage': 'saving', 'message': f'서브세션 저장 중 ({cluster_idx+1}/{num_clusters})...', 'progress': progress})}\n\n"
-                await asyncio.sleep(0.01)  # 연결 유지
+                time.sleep(0.01)  # 연결 유지
 
             # 8. 세션 업데이트
             session.subsessions = subsessions
@@ -489,7 +491,7 @@ async def upload_session_with_progress(
 # ========== 3. Learning - Chat ==========
 
 @app.post("/learn/chat/intro")
-async def get_subsession_intro(subsession_id: int, user_id: str = "default_user"):
+def get_subsession_intro(subsession_id: int, user_id: str = "default_user"):
     """
     서브세션 시작 시 AI 튜터의 소개 메시지 생성
 
@@ -546,31 +548,46 @@ async def get_subsession_intro(subsession_id: int, user_id: str = "default_user"
 
 
 @app.post("/learn/chat", response_model=ChatResponse)
-async def learn_chat(request: ChatRequest):
+def learn_chat(request: ChatRequest):
     """
-    채팅 기반 학습
+    채팅 기반 학습 (순차적 청크 진행)
 
     Args:
-        request: ChatRequest (subsession_id, user_msg, chat_history)
+        request: ChatRequest (subsession_id, user_msg, chat_history, current_chunk_index)
 
     Returns:
-        ChatResponse (explanation, prompt_to_user, covered_chunk_ids)
+        ChatResponse (explanation, prompt_to_user, covered_chunk_ids, is_complete, next_chunk_index, total_chunks)
     """
-    # 1. 사용자 메시지 임베딩
-    embedding_service = get_embedding_service()
-    query_embedding = embedding_service.encode_query(request.user_msg)
+    # 1. 서브세션의 모든 청크 가져오기 (순서대로)
+    all_chunks = vector_store.get_all_chunks_by_subsession(request.subsession_id)
 
-    # 2. 벡터 검색 (Top-K=6)
-    results = vector_store.query_chunks(
-        query_embedding=query_embedding,
-        subsession_id=request.subsession_id,
-        top_k=6
-    )
-
-    if not results["documents"]:
+    if not all_chunks:
         raise HTTPException(status_code=404, detail="No content found for this subsession")
 
-    # 3. LLM 응답 생성
+    total_chunks = len(all_chunks)
+    current_index = request.current_chunk_index
+
+    # 2. 현재 청크 선택 (인덱스 범위 확인)
+    if current_index >= total_chunks:
+        # 모든 청크를 다 배웠으면 완료 메시지
+        return ChatResponse(
+            explanation="모든 내용을 완료했습니다! 이제 퀴즈로 넘어가 학습한 내용을 확인해봅시다.",
+            prompt_to_user="퀴즈를 시작하시겠습니까?",
+            covered_chunk_ids=[],
+            is_complete=True,
+            next_chunk_index=current_index,
+            total_chunks=total_chunks
+        )
+
+    current_chunk = all_chunks[current_index]
+
+    # 3. 다음 청크도 컨텍스트에 포함 (힌트용)
+    context_chunks = [current_chunk["document"]]
+    if current_index + 1 < total_chunks:
+        next_chunk = all_chunks[current_index + 1]
+        context_chunks.append(next_chunk["document"])
+
+    # 4. LLM 응답 생성
     llm_service = get_llm_service()
     chat_history = [
         {"role": msg.role, "content": msg.content}
@@ -579,13 +596,17 @@ async def learn_chat(request: ChatRequest):
 
     response = llm_service.generate_chat_response(
         user_msg=request.user_msg,
-        context_chunks=results["documents"],
-        chat_history=chat_history
+        context_chunks=context_chunks,
+        chat_history=chat_history,
+        is_first_chunk=(current_index == 0),
+        has_next_chunk=(current_index + 1 < total_chunks)
     )
 
-    # covered_chunk_ids는 검색된 청크의 ID
-    covered_ids = [int(id_str) for id_str in results["ids"]]
-    response["covered_chunk_ids"] = covered_ids
+    # 5. 진행 상태 정보 추가
+    response["covered_chunk_ids"] = [int(current_chunk["id"])]
+    response["is_complete"] = False
+    response["next_chunk_index"] = current_index + 1
+    response["total_chunks"] = total_chunks
 
     return ChatResponse(**response)
 
@@ -593,7 +614,7 @@ async def learn_chat(request: ChatRequest):
 # ========== 4. Learning - Quiz Generate ==========
 
 @app.post("/learn/quiz:generate", response_model=QuizGenerateResponse)
-async def generate_quiz(request: QuizGenerateRequest):
+def generate_quiz(request: QuizGenerateRequest):
     """
     퀴즈 생성
 
@@ -640,7 +661,7 @@ async def generate_quiz(request: QuizGenerateRequest):
 # ========== 5. Learning - Quiz Submit ==========
 
 @app.post("/learn/quiz:submit", response_model=QuizSubmitResponse)
-async def submit_quiz(request: QuizSubmitRequest):
+def submit_quiz(request: QuizSubmitRequest):
     """
     퀴즈 제출 및 채점 (3지선다)
 
@@ -687,7 +708,7 @@ async def submit_quiz(request: QuizSubmitRequest):
 # ========== 6. Learning - Summary ==========
 
 @app.post("/learn/summary", response_model=Summary)
-async def generate_summary(request: SummaryRequest):
+def generate_summary(request: SummaryRequest):
     """
     학습 요약 생성
 
@@ -716,7 +737,7 @@ async def generate_summary(request: SummaryRequest):
 # ========== 7. Subsession Complete ==========
 
 @app.post("/subsessions/{subsession_id}/complete")
-async def complete_subsession(
+def complete_subsession(
     subsession_id: int,
     request: CompleteSubsessionRequest
 ):
@@ -798,14 +819,14 @@ async def complete_subsession(
 # ========== 8. User Profile ==========
 
 @app.post("/profile", response_model=UserProfile)
-async def create_profile(profile: UserProfile):
+def create_profile(profile: UserProfile):
     """프로필 생성/업데이트"""
     db.save_profile(profile)
     return profile
 
 
 @app.get("/profile", response_model=Optional[UserProfile])
-async def get_profile(user_id: str = "default_user"):
+def get_profile(user_id: str = "default_user"):
     """프로필 조회"""
     profile = db.get_profile(user_id)
     return profile

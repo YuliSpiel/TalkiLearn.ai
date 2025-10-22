@@ -209,13 +209,12 @@ class Database:
         ]
 
 
-# 싱글톤 인스턴스
-_database = None
-
-
+# 싱글톤 제거 - 매번 새 인스턴스를 생성하여 파일에서 최신 데이터를 읽음
 def get_database() -> Database:
-    """데이터베이스 싱글톤 인스턴스 반환"""
-    global _database
-    if _database is None:
-        _database = Database()
-    return _database
+    """
+    데이터베이스 인스턴스 반환 (싱글톤 아님)
+
+    매 요청마다 새 인스턴스를 생성하여 항상 파일에서 최신 데이터를 읽습니다.
+    이렇게 하면 여러 백엔드 프로세스가 실행 중이어도 데이터 일관성이 유지됩니다.
+    """
+    return Database()

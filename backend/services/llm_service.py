@@ -28,14 +28,18 @@ class LLMService:
         user_msg: str,
         context_chunks: List[str],
         chat_history: List[Dict[str, str]],
+        is_first_chunk: bool = False,
+        has_next_chunk: bool = True
     ) -> Dict[str, Any]:
         """
-        채팅 학습 응답 생성
+        채팅 학습 응답 생성 (순차적 학습 흐름)
 
         Args:
             user_msg: 사용자 메시지
-            context_chunks: 검색된 컨텍스트 청크 목록
+            context_chunks: 현재 청크 + (옵션) 다음 청크
             chat_history: 채팅 히스토리 (role, content)
+            is_first_chunk: 첫 번째 청크인지 여부
+            has_next_chunk: 다음 청크가 있는지 여부
 
         Returns:
             {
@@ -44,25 +48,57 @@ class LLMService:
                 "covered_chunk_ids": List[int]
             }
         """
-        # 컨텍스트 결합
-        context = "\n\n".join(context_chunks)
+        # 현재 청크 (항상 첫 번째)
+        current_context = context_chunks[0] if context_chunks else ""
 
-        # 시스템 프롬프트
-        system_prompt = f"""당신은 친절하고 전문적인 학습 튜터입니다.
-사용자가 업로드한 학습 자료를 바탕으로 학습을 돕습니다.
+        # 다음 청크 힌트 (있는 경우)
+        next_context_hint = ""
+        if has_next_chunk and len(context_chunks) > 1:
+            next_context_hint = f"\n\n**다음 학습 내용 (힌트용):**\n{context_chunks[1][:200]}..."
+
+        # 시스템 프롬프트 (순차적 학습 흐름)
+        if is_first_chunk:
+            # 첫 번째 청크: 바로 내용 설명 시작
+            system_prompt = f"""당신은 친절하고 전문적인 학습 튜터입니다.
+사용자가 업로드한 학습 자료를 순차적으로 가르칩니다.
+
+**현재 학습 내용:**
+{current_context}
+{next_context_hint}
 
 **역할:**
-1. 제공된 컨텍스트를 바탕으로 3-5문장으로 개념을 설명합니다.
-2. 설명 마지막에 사용자의 이해를 확인할 수 있는 짧은 질문(1문장)을 제시합니다.
-3. 응답은 반드시 JSON 형식으로 출력해야 합니다.
-
-**컨텍스트:**
-{context}
+1. 위 내용을 3-5문장으로 명확하게 설명합니다.
+2. 설명 후, 사용자의 이해를 확인하는 질문을 던집니다.
+3. 질문은 다음 내용으로 자연스럽게 이어질 수 있도록 구성합니다.
+4. 응답은 반드시 JSON 형식으로 출력해야 합니다.
 
 **JSON 출력 형식:**
 {{
-  "explanation": "개념 설명 (3-5문장)",
-  "prompt_to_user": "사용자에게 던질 질문 (1문장)"
+  "explanation": "현재 내용 설명 (3-5문장)",
+  "prompt_to_user": "사용자에게 던질 질문 (1문장, 다음 내용 힌트 포함)"
+}}
+
+반드시 위 형식의 JSON만 출력하세요."""
+        else:
+            # 중간/마지막 청크: 사용자 답변 피드백 + 새 내용 설명
+            system_prompt = f"""당신은 친절하고 전문적인 학습 튜터입니다.
+사용자가 업로드한 학습 자료를 순차적으로 가르칩니다.
+
+**현재 학습 내용:**
+{current_context}
+{next_context_hint}
+
+**역할:**
+1. 먼저 사용자의 답변에 대해 1-2문장으로 피드백합니다.
+2. 그 다음, 위 "현재 학습 내용"을 3-5문장으로 설명합니다.
+3. 설명 후, 사용자의 이해를 확인하는 질문을 던집니다.
+4. 질문은 다음 내용으로 자연스럽게 이어질 수 있도록 구성합니다.
+5. 응답은 반드시 JSON 형식으로 출력해야 합니다.
+
+**JSON 출력 형식:**
+{{
+  "explanation": "사용자 답변 피드백 (1-2문장) + 현재 내용 설명 (3-5문장)",
+  "prompt_to_user": "사용자에게 던질 질문 (1문장, 다음 내용 힌트 포함)"
 }}
 
 반드시 위 형식의 JSON만 출력하세요."""
@@ -91,7 +127,7 @@ class LLMService:
         return {
             "explanation": result.get("explanation", ""),
             "prompt_to_user": result.get("prompt_to_user", ""),
-            "covered_chunk_ids": [],  # 추후 벡터 검색 결과에서 채울 수 있음
+            "covered_chunk_ids": [],  # 엔드포인트에서 채워짐
         }
 
     def generate_quiz(
@@ -285,26 +321,28 @@ class LLMService:
         context = "\n\n".join(context_chunks)
 
         system_prompt = f"""당신은 학습 내용을 요약하는 전문가입니다.
-제공된 학습 자료를 바탕으로 핵심 개념을 요약합니다.
+제공된 학습 자료를 바탕으로 핵심 개념을 상세히 요약합니다.
 
 **요구사항:**
-1. 핵심 개념을 반드시 포함하여 요약합니다.
-- 이에 대한 예문도 이해를 도울 수 있다면 포함합니다.
-2. 학습자가 혼동하기 쉬운 포인트 2-3개를 제시합니다.
-3. 다음 학습 주제 2-3개를 추천합니다.
-4. 응답은 반드시 JSON 형식으로 출력해야 합니다.
-5. 학습 자료에 없는 내용은 포함하지 않습니다.
+1. 이 서브세션에서 다룬 **모든 핵심 개념**을 빠짐없이 포함하여 요약합니다.
+2. 각 개념에 대한 설명과 예시를 충분히 제공합니다.
+3. 요약은 **최소 15줄 이상**, 내용이 많으면 20-30줄까지 작성할 수 있습니다.
+4. 학습자가 혼동하기 쉬운 포인트 3-5개를 구체적으로 제시합니다.
+5. 다음 학습 주제 2-3개를 추천합니다.
+6. 응답은 반드시 JSON 형식으로 출력해야 합니다.
+7. 학습 자료에 없는 내용은 절대 포함하지 않습니다.
 
 **학습 자료:**
 {context}
 
 **JSON 출력 형식:**
 {{
-  "summary": "핵심 개념 요약 (5-7줄, 줄바꿈은 \\n 사용)",
-  "pitfalls": ["혼동 포인트1", "혼동 포인트2"],
-  "next_topics": ["다음 주제1", "다음 주제2"]
+  "summary": "핵심 개념 상세 요약 (최소 15줄 이상, 모든 개념을 빠짐없이 포함, 줄바꿈은 \\n 사용)\\n\\n각 개념에 대해:\\n- 정의 및 설명\\n- 예시 또는 예문\\n- 주요 특징\\n\\n이런 식으로 구조화하여 작성",
+  "pitfalls": ["혼동 포인트1 (구체적으로)", "혼동 포인트2 (구체적으로)", "혼동 포인트3 (구체적으로)"],
+  "next_topics": ["다음 주제1", "다음 주제2", "다음 주제3"]
 }}
 
+**중요:** 요약은 반드시 학습 자료의 모든 주요 내용을 포함해야 하며, 최소 15줄 이상으로 충분히 상세하게 작성하세요.
 반드시 위 형식의 JSON만 출력하세요."""
 
         # LLM 호출
@@ -312,7 +350,7 @@ class LLMService:
             model=self.model,
             messages=[
                 {"role": "system", "content": system_prompt},
-                {"role": "user", "content": "학습 내용을 요약해주세요."},
+                {"role": "user", "content": "학습 내용의 모든 핵심 개념을 빠짐없이 포함하여 최소 15줄 이상으로 상세하게 요약해주세요. 각 개념에 대한 설명, 예시, 특징을 충분히 담아주세요."},
             ],
             temperature=0.5,
             response_format={"type": "json_object"},
