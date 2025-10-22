@@ -71,32 +71,30 @@ def show():
 
             st.write("")
 
-            # 3. 관심 주제 입력
-            st.write("**3. 관심 주제를 입력하세요 (쉼표로 구분)**")
-            interests_input = st.text_input(
-                "관심 주제",
-                placeholder="예: 언어 학습, 프로그래밍, 역사",
-                label_visibility="collapsed"
+            # 3. 닉네임 입력
+            st.write("**3. 닉네임을 입력하세요**")
+            nickname = st.text_input(
+                "닉네임",
+                placeholder="예: 학습왕, 공부벌레",
+                label_visibility="collapsed",
+                max_chars=20
             )
 
             # 제출 버튼
             submitted = st.form_submit_button("프로필 완성하기", use_container_width=True)
 
             if submitted:
-                # 관심 주제 파싱
-                interests = [i.strip() for i in interests_input.split(",") if i.strip()]
-
-                if not interests:
-                    st.error("관심 주제를 하나 이상 입력해주세요.")
+                if not nickname.strip():
+                    st.error("닉네임을 입력해주세요.")
                 else:
                     # API 호출하여 프로필 저장
                     try:
                         api_url = st.session_state.api_url
                         profile_data = {
                             "user_id": "default_user",
+                            "nickname": nickname.strip(),
                             "icon": selected_icon,
-                            "background_color": selected_color,
-                            "interests": interests
+                            "background_color": selected_color
                         }
 
                         with httpx.Client() as client:

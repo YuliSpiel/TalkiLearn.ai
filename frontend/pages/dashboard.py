@@ -49,7 +49,7 @@ def show():
             unsafe_allow_html=True
         )
         st.markdown(
-            f"<p style='text-align: center; color: gray;'>관심 주제: {', '.join(profile['interests'])}</p>",
+            f"<p style='text-align: center; font-weight: bold; font-size: 18px;'>{profile['nickname']}</p>",
             unsafe_allow_html=True
         )
 
