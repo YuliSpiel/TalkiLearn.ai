@@ -6,11 +6,11 @@ import numpy as np
 class EmbeddingService:
     """임베딩 생성 서비스 (sentence-transformers 사용)"""
 
-    def __init__(self, model_name: str = "all-MiniLM-L6-v2"):
+    def __init__(self, model_name: str = "paraphrase-MiniLM-L3-v2"):
         """
         Args:
             model_name: sentence-transformers 모델명
-                       기본값: all-MiniLM-L6-v2 (빠르고 효율적인 다국어 모델)
+                       기본값: paraphrase-MiniLM-L3-v2 (매우 빠른 경량 모델, 2-3배 속도 향상)
         """
         self.model_name = model_name
         print(f"Loading embedding model: {model_name}...")
